@@ -41,7 +41,7 @@ public class BasicLuaConfigTest {
   @Before
   public void setUp() throws Exception {
     clusterMax = Records.newRecord(Resource.class);
-    clusterMax.setMemory(90);
+    clusterMax.setMemorySize(90);
     conf = new Configuration();
     conf.set(LocalDataHelper.APP_BASE_DIR, "file:///tmp/");
   }
