@@ -16,19 +16,17 @@ package com.cloudera.kitten.appmaster.service;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
-
 import org.apache.commons.logging.LogFactory;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.security.Credentials;
@@ -48,6 +46,7 @@ import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.client.api.AMRMClient;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
+import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest.ContainerRequestBuilder;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
 import org.apache.hadoop.yarn.client.api.async.NMClientAsync;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
@@ -80,11 +79,14 @@ public class ApplicationMasterServiceImpl extends
   private UserGroupInformation appSubmitterUgi;
   private boolean hasRunningContainers = false;
   private Throwable throwable;
+  protected Random random = new Random();
 
   public ApplicationMasterServiceImpl(ApplicationMasterParameters parameters, Configuration conf) {
     this.parameters = Preconditions.checkNotNull(parameters);
     this.conf = new YarnConfiguration(conf);
   }
+  
+  
 
   @Override
   public ApplicationMasterParameters getParameters() {
@@ -329,7 +331,7 @@ public class ApplicationMasterServiceImpl extends
     stop();
   }
 
-  protected class ContainerTracker implements NMClientAsync.CallbackHandler {
+  protected class ContainerTracker extends NMClientAsync.AbstractCallbackHandler {
     protected final ContainerLaunchParameters parameters;
     private final ConcurrentMap<ContainerId, Container> containers = Maps.newConcurrentMap();
 
@@ -345,6 +347,7 @@ public class ApplicationMasterServiceImpl extends
     protected ContainerLaunchContext ctxt;
     AMRMClient.ContainerRequest containerRequest;
     String[] nodes;
+    Set<Long> requestIds = Sets.newHashSet();
 
     public ContainerTracker(ContainerLaunchParameters parameters) {
       this.parameters = parameters;
@@ -367,21 +370,24 @@ public class ApplicationMasterServiceImpl extends
       }
       
       String[] racks = null;
-      containerRequest = new AMRMClient.ContainerRequest(
-          resource,
-          nodes, // nodes
-          racks, // racks
-          priority,
-
-          nodes == null, //we can relax locality only when no node names are specified
-          nodeLabelsExpression //usually null
-          );
+      ContainerRequestBuilder crb = 
+    		  ContainerRequest.newBuilder()
+    		  
+    		  .capability(resource)
+    		  .nodes(nodes)
+    		  .nodeLabelsExpression(nodeLabelsExpression)
+    		  .relaxLocality( nodes == null); //we can relax locality only when no node names are specified
+      
       int numInstances = total = parameters.getNumInstances();
       LOG.info(this.toString() + " needs " + numInstances + " instances of this container type");
       LOG.info(this.toString() + " container request is resource=" 
     		  + resource.toString() + " nodes="+ nodes + " racks="+racks + " priority="+priority);
+      
       for (int j = 0; j < numInstances; j++) {
-        resourceManager.addContainerRequest(containerRequest);
+    	long requestId = random.nextLong();
+    	ContainerRequest cr = crb.allocationRequestId(requestId).build();
+        resourceManager.addContainerRequest(cr);
+        requestIds.add(requestId);
       }
       needed.set(numInstances);
       totalRequested.addAndGet(numInstances);
@@ -439,11 +445,13 @@ public class ApplicationMasterServiceImpl extends
     public boolean matches(Container c) {
     	LOG.info("Trying to match container " + c.toString() + " @ " +c.getNodeId()  + " with "+ c.getResource().toString());
     	LOG.info("... to " + this.resource.toString());
+    	return requestIds.contains(c.getAllocationRequestId());
+    	
     	//if (! c.getResource().equals(this.resource))
     	//	return false;
-    	if (nodes != null && nodes.length > 0 && ! Arrays.asList(nodes).contains(c.getNodeId().getHost()))
-    		return false;
-    	return true;
+//    	if (nodes != null && nodes.length > 0 && ! Arrays.asList(nodes).contains(c.getNodeId().getHost()))
+//    		return false;
+//    	return true;
     }
     
     public boolean owns(ContainerId cid) {
@@ -479,6 +487,27 @@ public class ApplicationMasterServiceImpl extends
     public boolean hasMoreContainers() {
       return needsContainers() || hasRunningContainers();
     }
+
+	@Override
+	public void onContainerResourceIncreased(ContainerId containerId, Resource r) {
+		LOG.info("onContainerResourceIncreased for container: " + containerId + " " + r);
+	}
+
+	@Override
+	public void onContainerResourceUpdated(ContainerId containerId, Resource r) {
+		LOG.info("onContainerResourceUpdated for container: " + containerId + " " + r);
+	}
+
+	@Override
+	public void onIncreaseContainerResourceError(ContainerId containerId,
+			Throwable t) {
+		LOG.error("onIncreaseContainerResourceError for container: " + containerId + " " + t);
+	}
+
+	@Override
+	public void onUpdateContainerResourceError(ContainerId containerId, Throwable t) {
+		LOG.error("onUpdateContainerResourceError for container: " + containerId + " " + t);
+	}
   }
 
 
