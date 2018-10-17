@@ -14,8 +14,8 @@
  */
 package com.cloudera.kitten.client.service;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+//import org.apache.commons.logging.Log;
+//import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
@@ -25,7 +25,7 @@ import com.google.common.base.Preconditions;
 
 public class YarnClientFactory implements MasterConnectionFactory<YarnClient> {
 
-  private static final Log LOG = LogFactory.getLog(YarnClientFactory.class);
+  //private static final Log LOG = LogFactory.getLog(YarnClientFactory.class);
   
   private final Configuration conf;
 
