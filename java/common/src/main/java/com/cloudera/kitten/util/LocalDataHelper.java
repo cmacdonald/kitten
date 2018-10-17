@@ -31,9 +31,7 @@ import java.util.Set;
 
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.logging.Log;
-
 import org.apache.commons.logging.LogFactory;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -43,7 +41,6 @@ import org.apache.hadoop.yarn.api.records.ApplicationId;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.io.ByteStreams;
-import com.google.common.io.Resources;
 
 /**
  * Handles copying files from the client machine out to HDFS for app master and container tasks, and
@@ -82,7 +79,8 @@ public class LocalDataHelper {
     return Base64.encodeBase64String(baos.toByteArray());
   }
   
-  public static <T> Map<String, T> deserialize(String serialized) {
+  @SuppressWarnings("unchecked")
+public static <T> Map<String, T> deserialize(String serialized) {
     byte[] data = Base64.decodeBase64(serialized);
     ByteArrayInputStream bais = new ByteArrayInputStream(data);
     Map<String, T> mapping = null;
