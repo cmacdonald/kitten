@@ -22,6 +22,7 @@ import java.io.IOException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.server.MiniYARNCluster;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -44,6 +45,7 @@ public class TestKittenDistributedShell {
   public static void setup() throws InterruptedException, IOException {
     LOG.info("Starting up YARN cluster");
     conf.setInt("yarn.scheduler.fifo.minimum-allocation-mb", 128);
+    conf.setFloat(YarnConfiguration.NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE, 99.9f);
     conf.set("yarn.nodemanager.vmem-pmem-ratio", "20.0");
     if (yarnCluster == null) {
       yarnCluster = new MiniYARNCluster(TestKittenDistributedShell.class.getName(),
