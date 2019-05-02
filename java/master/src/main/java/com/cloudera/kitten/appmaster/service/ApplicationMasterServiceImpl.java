@@ -16,6 +16,7 @@ package com.cloudera.kitten.appmaster.service;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -427,9 +428,9 @@ public class ApplicationMasterServiceImpl extends
       int numInstances = total = parameters.getNumInstances();
       LOG.info(this.toString() + " needs " + numInstances + " instances of this container type");
       LOG.info(this.toString() + " container request is resource=" 
-    		  + resource.toString() + " nodes="+ nodes + " racks="+racks + " priority="+priority 
+    		  + resource.toString() + " nodes="+ Arrays.toString(nodes) + " racks="+Arrays.toString(racks) + " priority="+priority 
     		  + " profile="+ resourceProfileExpression + " nodelabels=" + nodeLabelsExpression);
-      
+
       for (int j = 0; j < numInstances; j++) {
     	long requestId = random.nextLong();
     	ContainerRequest cr = crb.allocationRequestId(requestId).build();
