@@ -16,6 +16,7 @@ package com.cloudera.kitten.lua;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +69,7 @@ public class LuaWrapper implements Iterable<LuaPair> {
     } catch (NullPointerException e) {
         LOG.error("Lua compiler error", e);
         try{
-	        List<String> lines = IOUtils.readLines( LocalDataHelper.getFileOrResource(script));
+	        List<String> lines = IOUtils.readLines( LocalDataHelper.getFileOrResource(script), Charset.defaultCharset());
 	        LOG.error(StringUtils.join("\n", lines));
         } catch (IOException ioe) {}
         throw new RuntimeException(e);

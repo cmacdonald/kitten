@@ -65,8 +65,7 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AbstractScheduledService;
 
 public class ApplicationMasterServiceImpl extends
-    AbstractScheduledService implements ApplicationMasterService,
-    AMRMClientAsync.CallbackHandler {
+    AbstractScheduledService implements ApplicationMasterService {
 
   private static final Log LOG = LogFactory.getLog(ApplicationMasterServiceImpl.class);
 
@@ -83,44 +82,112 @@ public class ApplicationMasterServiceImpl extends
   private Throwable throwable;
   protected Random random = new Random();
 
-
+  protected AMRMClientAsync.AbstractCallbackHandler handler;
   
-  final AMRMClientAsync.AbstractCallbackHandler handler = new AMRMClientAsync.AbstractCallbackHandler() {
+  protected class AMRMClientCallbackHandler extends AMRMClientAsync.AbstractCallbackHandler {
 
 	@Override
 	public float getProgress() {
-		return ApplicationMasterServiceImpl.this.getProgress();
+		int num = 0, den = 0;
+	    synchronized (trackers) {
+	        for (ContainerTracker tracker : trackers) {
+	              num += tracker.completed.get();
+	              den += tracker.parameters.getNumInstances();
+	        }
+	    }
+	    if (den == 0) {
+	      return 0.0f;
+	    }
+	    return ((float) num) / (float)den;
 	}
 
 	@Override
-	public void onContainersAllocated(List<Container> arg0) {
-		ApplicationMasterServiceImpl.this.onContainersAllocated(arg0);
+	public void onContainersAllocated(List<Container> allocatedContainers) {
+		LOG.info("Allocating " + allocatedContainers.size() + " container(s)");
+	    Set<Container> assigned = Sets.newHashSet();
+	    synchronized (trackers) {
+	    	 ALLOCATED: for (Container allocated : allocatedContainers) {
+	    		 LOG.info("Looking for home for "+ allocated.getId().toString());
+	    		 for (ContainerTracker tracker : trackers) {
+	    			//we need to check tracker.needsContainers() for each container, as the
+	    		    //previously allocated container may have addressed the containers' need
+	    			 if (tracker.needsContainers() && ! assigned.contains(allocated) && tracker.matches(allocated)) {
+					    LOG.info("Allocated to " + tracker.toString());
+	    				tracker.launchContainer(allocated);
+					    assigned.add(allocated);
+					    if (! tracker.needsContainers())
+					    {	
+					    	LOG.info("Cancelling request for " + tracker.getContainerRequest(allocated));
+					    	resourceManager.removeContainerRequest(tracker.getContainerRequest(allocated));
+					    }					    
+					    continue ALLOCATED;
+					}
+	    		 }
+	    	 }
+	    	
+// This is the Hadoop 2.6 logic, which searches for matching resources	    	
+//		    for (ContainerTracker tracker : trackers) {
+//		    	//we need to check tracker.needsContainers() for each container, as the
+//		    	//previously allocated container may have addressed the containers' need
+//		        for (Container allocated : allocatedContainers) {
+//		          if (tracker.needsContainers() && ! assigned.contains(allocated) && tracker.matches(allocated)) {
+//		            tracker.launchContainer(allocated);
+//		            assigned.add(allocated);
+//		            resourceManager.removeContainerRequest(tracker.containerRequest);
+//		          }
+//		        }
+//		    }
+	    }
+	    if (assigned.size() < allocatedContainers.size()) {
+	      LOG.warn(String.format("Not all containers were allocated (%d out of %d)", assigned.size(),
+	          allocatedContainers.size()));
+	      //stop();
+	    }
 	}
 
 	@Override
-	public void onContainersCompleted(List<ContainerStatus> arg0) {
-		ApplicationMasterServiceImpl.this.onContainersCompleted(arg0);
+	public void onContainersCompleted(List<ContainerStatus> containerStatuses) {
+		LOG.info(containerStatuses.size() + " containers have completed");
+	    for (ContainerStatus status : containerStatuses) {
+	      int exitStatus = status.getExitStatus();
+	      if (0 != exitStatus) {
+	        // container failed
+	        LOG.warn("Container " + status.getContainerId() + " exited with code "+ exitStatus + " diagnostic " + status.getDiagnostics());
+	    	if (ContainerExitStatus.ABORTED != exitStatus) {
+	          totalCompleted.incrementAndGet();
+	          totalFailures.incrementAndGet();
+	        } else {
+	          // container was killed by framework, possibly preempted
+	          // we should re-try as the container was lost for some reason
+	        }
+	      } else {
+	        // nothing to do
+	        // container completed successfully
+	        totalCompleted.incrementAndGet();
+	        LOG.info("Container id = " + status.getContainerId() + " completed successfully");
+	      }
+	    }
 	}
 
 	@Override
 	public void onContainersUpdated(List<UpdatedContainer> arg0) {
 		LOG.warn("onContainersUpdated("+arg0.toString()+ ") called but not implemented");
-		//ApplicationMasterServiceImpl.this.onContainersUpdated(arg0);
 	}
 
 	@Override
-	public void onError(Throwable arg0) {
-		ApplicationMasterServiceImpl.this.onError(arg0);
+	public void onError(Throwable throwable) {
+	  ApplicationMasterServiceImpl.this.throwable = throwable;
+	  stop();
 	}
 
 	@Override
-	public void onNodesUpdated(List<NodeReport> arg0) {
-		ApplicationMasterServiceImpl.this.onNodesUpdated(arg0);
+	public void onNodesUpdated(List<NodeReport> nodeReports) {
+		LOG.warn("onNodesUpdated("+nodeReports.toString()+ ") called but not implemented");
 	}
 
 	@Override
 	public void onShutdownRequest() {
-		ApplicationMasterServiceImpl.this.onShutdownRequest();
+		stop();
 	}
 	  
   };
@@ -128,6 +195,7 @@ public class ApplicationMasterServiceImpl extends
   public ApplicationMasterServiceImpl(ApplicationMasterParameters parameters, Configuration conf) {
 	    this.parameters = Preconditions.checkNotNull(parameters);
 	    this.conf = new YarnConfiguration(conf);
+	    this.handler = new AMRMClientCallbackHandler();
   }
 
   @Override
@@ -262,96 +330,6 @@ public class ApplicationMasterServiceImpl extends
     }
   }
 
-  // AMRMClientHandler methods
-  @Override
-  public void onContainersCompleted(List<ContainerStatus> containerStatuses) {
-    LOG.info(containerStatuses.size() + " containers have completed");
-    for (ContainerStatus status : containerStatuses) {
-      int exitStatus = status.getExitStatus();
-      if (0 != exitStatus) {
-        // container failed
-        LOG.warn("Container " + status.getContainerId() + " exited with code "+ exitStatus + " diagnostic " + status.getDiagnostics());
-    	if (ContainerExitStatus.ABORTED != exitStatus) {
-          totalCompleted.incrementAndGet();
-          totalFailures.incrementAndGet();
-        } else {
-          // container was killed by framework, possibly preempted
-          // we should re-try as the container was lost for some reason
-        }
-      } else {
-        // nothing to do
-        // container completed successfully
-        totalCompleted.incrementAndGet();
-        LOG.info("Container id = " + status.getContainerId() + " completed successfully");
-      }
-    }
-  }
-
-  @Override
-  public void onContainersAllocated(List<Container> allocatedContainers) {
-    LOG.info("Allocating " + allocatedContainers.size() + " container(s)");
-    Set<Container> assigned = Sets.newHashSet();
-    synchronized (trackers) {
-    	 ALLOCATED: for (Container allocated : allocatedContainers) {
-    		 LOG.info("Looking for home for "+ allocated.getId().toString());
-    		 for (ContainerTracker tracker : trackers) {
-    			//we need to check tracker.needsContainers() for each container, as the
-    		    //previously allocated container may have addressed the containers' need
-    			 if (tracker.needsContainers() && ! assigned.contains(allocated) && tracker.matches(allocated)) {
-				    LOG.info("Allocated to " + tracker.toString());
-    				tracker.launchContainer(allocated);
-				    assigned.add(allocated);
-				    LOG.info("Cancelling request for " + tracker.getContainerRequest(allocated));
-				    resourceManager.removeContainerRequest(tracker.getContainerRequest(allocated));
-				    continue ALLOCATED;
-				}
-    		 }
-    	 }
-    	
-    	
-//	    for (ContainerTracker tracker : trackers) {
-//	    	//we need to check tracker.needsContainers() for each container, as the
-//	    	//previously allocated container may have addressed the containers' need
-//	        for (Container allocated : allocatedContainers) {
-//	          if (tracker.needsContainers() && ! assigned.contains(allocated) && tracker.matches(allocated)) {
-//	            tracker.launchContainer(allocated);
-//	            assigned.add(allocated);
-//	            resourceManager.removeContainerRequest(tracker.containerRequest);
-//	          }
-//	        }
-//	    }
-    }
-    if (assigned.size() < allocatedContainers.size()) {
-      LOG.warn(String.format("Not all containers were allocated (%d out of %d)", assigned.size(),
-          allocatedContainers.size()));
-      //stop();
-    }
-  }
-
-  @Override
-  public void onShutdownRequest() {
-    stop();
-  }
-
-  @Override
-  public void onNodesUpdated(List<NodeReport> nodeReports) {
-	  LOG.warn("onNodesUpdated("+nodeReports.toString()+ ") called but not implemented");
-  }
-
-  @Override
-  public float getProgress() {
-    int num = 0, den = 0;
-    synchronized (trackers) {
-        for (ContainerTracker tracker : trackers) {
-              num += tracker.completed.get();
-              den += tracker.parameters.getNumInstances();
-        }
-    }
-    if (den == 0) {
-      return 0.0f;
-    }
-    return ((float) num) / (float)den;
-  }
   
   @Override
   public int getTotalRequested() {
@@ -366,12 +344,6 @@ public class ApplicationMasterServiceImpl extends
   @Override
   public int getTotalFailures() {
   	return totalFailures.get();
-  }
-
-  @Override
-  public void onError(Throwable throwable) {
-    this.throwable = throwable;
-    stop();
   }
 
   protected class ContainerTracker extends NMClientAsync.AbstractCallbackHandler {
