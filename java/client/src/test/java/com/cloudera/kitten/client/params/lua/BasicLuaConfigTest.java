@@ -58,6 +58,11 @@ public class BasicLuaConfigTest {
     assertEquals("default", params.getQueue());
     
     ContainerLaunchParameters clp = params.getApplicationMasterParameters(null);
+    
+    assertEquals(2, clp.getGPUs());
+    assertEquals("gpus", clp.getNodeLabelsExpression());
+    assertEquals("fastnode", clp.getResourceProfile());
+    
     assertEquals(1, clp.getPriority());
     // clusterMax = 90 < 100
     assertEquals(clusterMax, clp.getContainerResource(clusterMax));

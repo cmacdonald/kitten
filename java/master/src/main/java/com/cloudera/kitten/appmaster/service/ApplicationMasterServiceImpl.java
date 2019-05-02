@@ -16,6 +16,7 @@ package com.cloudera.kitten.appmaster.service;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +45,7 @@ import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.NodeReport;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.client.api.AMRMClient;
+import org.apache.hadoop.yarn.api.records.UpdatedContainer;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest;
 import org.apache.hadoop.yarn.client.api.AMRMClient.ContainerRequest.ContainerRequestBuilder;
 import org.apache.hadoop.yarn.client.api.async.AMRMClientAsync;
@@ -81,12 +82,52 @@ public class ApplicationMasterServiceImpl extends
   private Throwable throwable;
   protected Random random = new Random();
 
+
+  
+  final AMRMClientAsync.AbstractCallbackHandler handler = new AMRMClientAsync.AbstractCallbackHandler() {
+
+	@Override
+	public float getProgress() {
+		return ApplicationMasterServiceImpl.this.getProgress();
+	}
+
+	@Override
+	public void onContainersAllocated(List<Container> arg0) {
+		ApplicationMasterServiceImpl.this.onContainersAllocated(arg0);
+	}
+
+	@Override
+	public void onContainersCompleted(List<ContainerStatus> arg0) {
+		ApplicationMasterServiceImpl.this.onContainersCompleted(arg0);
+	}
+
+	@Override
+	public void onContainersUpdated(List<UpdatedContainer> arg0) {
+		LOG.warn("onContainersUpdated("+arg0.toString()+ ") called but not implemented");
+		//ApplicationMasterServiceImpl.this.onContainersUpdated(arg0);
+	}
+
+	@Override
+	public void onError(Throwable arg0) {
+		ApplicationMasterServiceImpl.this.onError(arg0);
+	}
+
+	@Override
+	public void onNodesUpdated(List<NodeReport> arg0) {
+		ApplicationMasterServiceImpl.this.onNodesUpdated(arg0);
+	}
+
+	@Override
+	public void onShutdownRequest() {
+		ApplicationMasterServiceImpl.this.onShutdownRequest();
+	}
+	  
+  };
+  
   public ApplicationMasterServiceImpl(ApplicationMasterParameters parameters, Configuration conf) {
-    this.parameters = Preconditions.checkNotNull(parameters);
-    this.conf = new YarnConfiguration(conf);
+	    this.parameters = Preconditions.checkNotNull(parameters);
+	    this.conf = new YarnConfiguration(conf);
   }
-  
-  
 
   @Override
   public ApplicationMasterParameters getParameters() {
@@ -126,7 +167,7 @@ public class ApplicationMasterServiceImpl extends
         appSubmitterUgi.addCredentials(credentials);
     }
 
-    this.resourceManager = AMRMClientAsync.createAMRMClientAsync(1000, this);
+    this.resourceManager = AMRMClientAsync.createAMRMClientAsync(1000, handler);
     this.resourceManager.init(conf);
     this.resourceManager.start();
 
@@ -259,7 +300,8 @@ public class ApplicationMasterServiceImpl extends
 				    LOG.info("Allocated to " + tracker.toString());
     				tracker.launchContainer(allocated);
 				    assigned.add(allocated);
-				    resourceManager.removeContainerRequest(tracker.containerRequest);
+				    LOG.info("Cancelling request for " + tracker.getContainerRequest(allocated));
+				    resourceManager.removeContainerRequest(tracker.getContainerRequest(allocated));
 				    continue ALLOCATED;
 				}
     		 }
@@ -292,7 +334,7 @@ public class ApplicationMasterServiceImpl extends
 
   @Override
   public void onNodesUpdated(List<NodeReport> nodeReports) {
-    //TODO
+	  LOG.warn("onNodesUpdated("+nodeReports.toString()+ ") called but not implemented");
   }
 
   @Override
@@ -344,10 +386,11 @@ public class ApplicationMasterServiceImpl extends
     private Resource resource;
     private Priority priority;
     private String nodeLabelsExpression;
+    private String resourceProfileExpression;
     protected ContainerLaunchContext ctxt;
-    AMRMClient.ContainerRequest containerRequest;
+    //AMRMClient.ContainerRequest containerRequest;
     String[] nodes;
-    Set<Long> requestIds = Sets.newHashSet();
+    Map<Long,ContainerRequest> requestIds = new HashMap<Long,ContainerRequest>();
 
     public ContainerTracker(ContainerLaunchParameters parameters) {
       this.parameters = parameters;
@@ -363,6 +406,7 @@ public class ApplicationMasterServiceImpl extends
       this.resource = factory.createResource(parameters);
       this.priority = factory.createPriority(parameters.getPriority());
       this.nodeLabelsExpression = factory.getNodeLabelExpression(parameters);
+      this.resourceProfileExpression = factory.getResourceProfileExpression(parameters);
       nodes = null;
       if (parameters.getNode() != null)
       {
@@ -372,22 +416,25 @@ public class ApplicationMasterServiceImpl extends
       String[] racks = null;
       ContainerRequestBuilder crb = 
     		  ContainerRequest.newBuilder()
-    		  
     		  .capability(resource)
     		  .nodes(nodes)
     		  .nodeLabelsExpression(nodeLabelsExpression)
+    		  .resourceProfile(resourceProfileExpression)
+    		  .priority(priority)
     		  .relaxLocality( nodes == null); //we can relax locality only when no node names are specified
+      
       
       int numInstances = total = parameters.getNumInstances();
       LOG.info(this.toString() + " needs " + numInstances + " instances of this container type");
       LOG.info(this.toString() + " container request is resource=" 
-    		  + resource.toString() + " nodes="+ nodes + " racks="+racks + " priority="+priority);
+    		  + resource.toString() + " nodes="+ nodes + " racks="+racks + " priority="+priority 
+    		  + " profile="+ resourceProfileExpression + " nodelabels=" + nodeLabelsExpression);
       
       for (int j = 0; j < numInstances; j++) {
     	long requestId = random.nextLong();
     	ContainerRequest cr = crb.allocationRequestId(requestId).build();
         resourceManager.addContainerRequest(cr);
-        requestIds.add(requestId);
+        requestIds.put(requestId, cr);
       }
       needed.set(numInstances);
       totalRequested.addAndGet(numInstances);
@@ -441,11 +488,16 @@ public class ApplicationMasterServiceImpl extends
       LOG.debug(this.toString() + " still needs " + needed.get());
       return needed.get() > 0;
     }
+    
+    public ContainerRequest getContainerRequest(Container c) {
+    	assert requestIds.get(c.getAllocationRequestId()) != null;
+    	return requestIds.get(c.getAllocationRequestId());
+    }
 
     public boolean matches(Container c) {
     	LOG.info("Trying to match container " + c.toString() + " @ " +c.getNodeId()  + " with "+ c.getResource().toString());
     	LOG.info("... to " + this.resource.toString());
-    	return requestIds.contains(c.getAllocationRequestId());
+    	return requestIds.containsKey(c.getAllocationRequestId());
     	
     	//if (! c.getResource().equals(this.resource))
     	//	return false;

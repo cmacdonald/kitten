@@ -36,6 +36,7 @@ public class LuaContainerLaunchParametersTest {
     assertEquals(0, lclp.getPriority());
     assertEquals(1, lclp.getNumInstances());
     assertEquals(0, lclp.getMemory());
+    assertEquals(0, lclp.getGPUs());
   }
   
   @Test

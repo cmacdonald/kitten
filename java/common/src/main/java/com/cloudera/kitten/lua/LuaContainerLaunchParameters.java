@@ -31,7 +31,8 @@ import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.util.ConverterUtils;
+import org.apache.hadoop.yarn.api.records.ResourceInformation;
+import org.apache.hadoop.yarn.api.records.URL;
 import org.apache.hadoop.yarn.util.Records;
 import org.luaj.vm2.LuaValue;
 
@@ -73,6 +74,17 @@ public class LuaContainerLaunchParameters implements ContainerLaunchParameters {
   public int getMemory() {
     return lv.getInteger(LuaFields.MEMORY);
   }
+  
+  @Override
+  public int getGPUs() {
+	  return lv.isNil(LuaFields.GPUS) ? 0 : lv.getInteger(LuaFields.GPUS);
+  }
+  
+  @Override
+  public String getResourceProfile() {
+	  return lv.isNil(LuaFields.RESOURCE_PROFILE) ? null : lv.getString(LuaFields.RESOURCE_PROFILE);
+  }
+ 
 
   @Override
   public String getNodeLabelsExpression() {
@@ -81,13 +93,21 @@ public class LuaContainerLaunchParameters implements ContainerLaunchParameters {
 
   @Override
   public Resource getContainerResource(Resource clusterMax) {
-    Resource rsrc = Records.newRecord(Resource.class);
+    boolean gpuSupport = anyMatch(clusterMax.getResources(), ResourceInformation.GPU_URI);
+	Resource rsrc = Resource.newInstance(clusterMax);
+    
     rsrc.setMemorySize(Math.min(clusterMax.getMemorySize(), getMemory()));
     rsrc.setVirtualCores(Math.min(clusterMax.getVirtualCores(), getCores()));
     if (rsrc.getMemorySize() < getMemory())
     	LOG.warn("Memory reduced from "+getMemory()+" to cluster maximum " + rsrc.getMemorySize());
     if (rsrc.getMemorySize() < getMemory())
     	LOG.warn("VCores reduced from "+getCores()+" to cluster maximum " + rsrc.getVirtualCores());
+    if (getGPUs() > 0)
+    {
+    	if (! gpuSupport)
+    		throw new IllegalArgumentException("Requested GPUs, but none available in cluster");
+    	rsrc.setResourceValue(ResourceInformation.GPU_URI, getGPUs()); 
+    }
     return rsrc;
   }
 
@@ -156,6 +176,13 @@ public class LuaContainerLaunchParameters implements ContainerLaunchParameters {
     return rsrc;
   }
   
+  static boolean anyMatch(ResourceInformation[] res, String name) {
+	  for(ResourceInformation r : res)
+		  if (r.getName().equals(name))
+			  return true;
+	  return false;
+  }
+  
   private static class NamedLocalResource {
     public final String name;
     public final LocalResource resource;
@@ -184,7 +211,7 @@ public class LuaContainerLaunchParameters implements ContainerLaunchParameters {
     }
     if (!value.isNil(LuaFields.LOCAL_RESOURCE_URL)) {
       URI uri = URI.create(value.getString(LuaFields.LOCAL_RESOURCE_URL));
-      rsrc.setResource(ConverterUtils.getYarnUrlFromURI(uri));
+      rsrc.setResource(URL.fromURI(uri));
       if (name.isEmpty()) {
         name = (new File(uri.getPath())).getName();
       }
@@ -214,7 +241,7 @@ public class LuaContainerLaunchParameters implements ContainerLaunchParameters {
     Path p = path.makeQualified(fs.getUri(), fs.getWorkingDirectory());
     rsrc.setSize(stat.getLen());
     rsrc.setTimestamp(stat.getModificationTime());
-    rsrc.setResource(ConverterUtils.getYarnUrlFromPath(p));
+    rsrc.setResource(URL.fromPath(p));
   }
   
   @Override

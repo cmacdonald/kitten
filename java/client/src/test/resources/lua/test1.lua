@@ -32,6 +32,9 @@ distshell = yarn(cat(base_app) {
   user = "josh",
   priority = 0,
   memory = 100,
+  gpus = 2,
+  resource_profile = "fastnode",
+  node_labels = "gpu",
 
   master = cat(base_master) {
     env = cat(base_master.env) {

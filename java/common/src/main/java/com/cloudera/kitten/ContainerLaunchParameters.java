@@ -64,4 +64,10 @@ public interface ContainerLaunchParameters {
   /** The node name that is /required/ for this container. Defaults to null, which signifies no
    * requirement */
   String getNode();
+  
+  /** Name of a resource profile that is requested */
+  String getResourceProfile();
+  
+  /** Number of gpus requested */
+  int getGPUs();
 }

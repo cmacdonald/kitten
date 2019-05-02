@@ -49,6 +49,10 @@ public class ContainerLaunchContextFactory {
 	  return parameters.getNodeLabelsExpression();
   }
   
+  public String getResourceProfileExpression(ContainerLaunchParameters parameters) {
+	  return parameters.getResourceProfile();
+  }
+  
   public Resource createResource(ContainerLaunchParameters parameters) {
     return parameters.getContainerResource(clusterMax);
   }
