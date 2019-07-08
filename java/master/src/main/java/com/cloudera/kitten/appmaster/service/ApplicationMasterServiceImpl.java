@@ -392,7 +392,7 @@ public class ApplicationMasterServiceImpl extends
     		  .capability(resource)
     		  .nodes(nodes)
     		  .nodeLabelsExpression(nodeLabelsExpression)
-    		  .resourceProfile(resourceProfileExpression)
+    		  //.resourceProfile(resourceProfileExpression) - CDH 6.2 doesn't have this
     		  .priority(priority)
     		  .relaxLocality( nodes == null); //we can relax locality only when no node names are specified
       
